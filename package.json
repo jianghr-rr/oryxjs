@@ -1,0 +1,29 @@
+{
+  "name": "oryxjs",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "lint:fix": "biome check --write .",
+    "check": "biome check .",
+    "audit": "pnpm audit --audit-level=high",
+    "verify": "pnpm check && pnpm typecheck && pnpm test && pnpm audit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.9",
+    "@types/node": "^26.6.7",
+    "turbo": "^2.11.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

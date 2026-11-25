@@ -99,14 +99,18 @@ for file in "${staged_files[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 3. [RESERVED] Project-level checks (uncomment after initializing package.json)
+# 3. Project-level checks: Biome on staged files
 # ---------------------------------------------------------------------------
-# Example once Node/TS skeleton is ready:
-#   pnpm format:check
-#   pnpm lint
-#   pnpm typecheck
-#   # or unified gate:
-#   pnpm verify
+if [[ -z "${LEFTHOOK:-}" ]] && [[ -f package.json ]]; then
+  if command -v pnpm >/dev/null 2>&1 && [[ -x node_modules/.bin/biome ]]; then
+    if ! pnpm exec biome check --staged --no-errors-on-unmatched; then
+      echo "[pre-commit] ERROR: Biome check failed on staged files. Run 'pnpm lint:fix' or fix the issues above." >&2
+      FAILED=1
+    fi
+  else
+    echo "[pre-commit] WARNING: Biome is not installed locally; skipping staged Biome check (run 'pnpm install')." >&2
+  fi
+fi
 
 if [[ "$FAILED" -ne 0 ]]; then
   echo "[pre-commit] Commit aborted. Please fix the issues above and try again." >&2

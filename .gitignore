@@ -15,3 +15,12 @@
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Node / pnpm / Turborepo / Build artifacts
+node_modules/
+dist/
+.turbo/
+.output/
+.tanstack/
+coverage/
+*.tsbuildinfo
