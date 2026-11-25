@@ -1,0 +1,17 @@
+# Project-local Spec Kit virtual environment (recreate via tools/spec-kit/README.md)
+.venv-speckit/
+
+# Secrets & environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+
+# OS artifacts
+.DS_Store
+Thumbs.db

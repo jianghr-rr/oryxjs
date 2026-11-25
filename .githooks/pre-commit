@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MAX_FILE_SIZE_BYTES=$((2 * 1024 * 1024)) # 2MB
+FAILED=0
+
+# Collect staged files (Added, Copied, Modified, Renamed)
+staged_files=()
+while IFS= read -r -d '' file; do
+  staged_files+=("$file")
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+if [[ ${#staged_files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Secret Leak Prevention: forbidden filenames + gitleaks / regex fallback
+# ---------------------------------------------------------------------------
+for file in "${staged_files[@]}"; do
+  base="$(basename "$file")"
+  case "$base" in
+    .env.example|.env.sample|.env.template|*.env.example)
+      ;;
+    .env|.env.*|*.env|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|id_rsa|id_ed25519|id_ecdsa|id_dsa)
+      echo "[pre-commit] ERROR: Sensitive file blocked from commit: $file" >&2
+      FAILED=1
+      ;;
+  esac
+done
+
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --redact --no-banner; then
+    echo "[pre-commit] ERROR: gitleaks detected potential secret(s) in staged changes." >&2
+    FAILED=1
+  fi
+else
+  echo "[pre-commit] WARNING: 'gitleaks' is not installed; skipping full gitleaks scan (install via: brew install gitleaks)." >&2
+  echo "[pre-commit] INFO: Running lightweight built-in secret pattern fallback on staged diff..." >&2
+
+  added_lines="$(git diff --cached -U0 --no-color -- . ':(exclude).githooks/pre-commit' | grep -E '^\+[^+]' || true)"
+  secret_pattern='-----BEGIN[[:space:]](RSA[[:space:]]|EC[[:space:]]|OPENSSH[[:space:]]|DSA[[:space:]]|PGP[[:space:]])?PRIVATE[[:space:]]KEY-----|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{36,}|sk-[A-Za-z0-9_-]{20,}'
+  if [[ -n "$added_lines" ]] && printf '%s\n' "$added_lines" | grep -Eq -e "$secret_pattern"; then
+    echo "[pre-commit] ERROR: Potential secret pattern detected in staged diff (install gitleaks for full scanning)." >&2
+    FAILED=1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2. File Hygiene: conflict markers, large files (> 2MB), JSON / YAML syntax
+# ---------------------------------------------------------------------------
+has_pyyaml=0
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  has_pyyaml=1
+fi
+
+for file in "${staged_files[@]}"; do
+  # 2a. Large file check (> 2MB)
+  size="$(git cat-file -s ":$file" 2>/dev/null || echo 0)"
+  if [[ "$size" -gt "$MAX_FILE_SIZE_BYTES" ]]; then
+    echo "[pre-commit] ERROR: Staged file exceeds 2MB limit (${size} bytes): $file" >&2
+    FAILED=1
+  fi
+
+  # 2b. Merge conflict markers (skip binary blobs via grep -I)
+  if git show ":$file" | grep -InE '^(<<<<<<< |=======$|>>>>>>> )' >/dev/null 2>&1; then
+    echo "[pre-commit] ERROR: Merge conflict marker found in staged file: $file" >&2
+    FAILED=1
+  fi
+
+  # 2c. JSON syntax check
+  case "$file" in
+    *.json)
+      if command -v python3 >/dev/null 2>&1; then
+        if ! git show ":$file" | python3 -m json.tool >/dev/null 2>&1; then
+          echo "[pre-commit] ERROR: Invalid JSON syntax in staged file: $file" >&2
+          FAILED=1
+        fi
+      else
+        echo "[pre-commit] WARNING: 'python3' not found; skipping JSON syntax check for $file" >&2
+      fi
+      ;;
+    *.yml|*.yaml)
+      if [[ "$has_pyyaml" -eq 1 ]]; then
+        if ! git show ":$file" | python3 -c 'import sys, yaml; list(yaml.safe_load_all(sys.stdin))' >/dev/null 2>&1; then
+          echo "[pre-commit] ERROR: Invalid YAML syntax in staged file: $file" >&2
+          FAILED=1
+        fi
+      elif command -v ruby >/dev/null 2>&1; then
+        if ! git show ":$file" | ruby -ryaml -e 'YAML.load_stream(STDIN.read)' >/dev/null 2>&1; then
+          echo "[pre-commit] ERROR: Invalid YAML syntax in staged file: $file" >&2
+          FAILED=1
+        fi
+      else
+        echo "[pre-commit] WARNING: Neither python3(PyYAML) nor ruby found; skipping YAML syntax check for $file" >&2
+      fi
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# 3. [RESERVED] Project-level checks (uncomment after initializing package.json)
+# ---------------------------------------------------------------------------
+# Example once Node/TS skeleton is ready:
+#   pnpm format:check
+#   pnpm lint
+#   pnpm typecheck
+#   # or unified gate:
+#   pnpm verify
+
+if [[ "$FAILED" -ne 0 ]]; then
+  echo "[pre-commit] Commit aborted. Please fix the issues above and try again." >&2
+  exit 1
+fi

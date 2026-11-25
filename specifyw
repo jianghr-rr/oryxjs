@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+venv_bin="${repo_root}/.venv-speckit/bin"
+specify_bin="${venv_bin}/specify"
+
+if [[ ! -x "${specify_bin}" ]]; then
+  cat >&2 <<'EOF'
+Error: Project-local Spec Kit environment not found (.venv-speckit/bin/specify).
+Please recreate it from the repository root:
+
+  uv venv --no-cache --no-python-downloads --python '>=3.11' .venv-speckit
+  uv pip install --no-cache --python .venv-speckit/bin/python -r tools/spec-kit/requirements.txt
+
+See tools/spec-kit/README.md for details.
+EOF
+  exit 1
+fi
+
+export PATH="${venv_bin}:${PATH}"
+cd "${repo_root}"
+exec "${specify_bin}" "$@"

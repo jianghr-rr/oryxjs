@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+commit_msg_file="${1:-}"
+if [[ -z "$commit_msg_file" || ! -f "$commit_msg_file" ]]; then
+  echo "[commit-msg] ERROR: Missing commit message file path." >&2
+  exit 1
+fi
+
+# Read the first non-comment, non-empty line as the subject
+subject="$(grep -v '^[[:space:]]*#' "$commit_msg_file" | sed '/^[[:space:]]*$/d' | head -n 1 || true)"
+
+if [[ -z "$subject" ]]; then
+  echo "[commit-msg] ERROR: Commit message cannot be empty." >&2
+  exit 1
+fi
+
+# Allow standard Git-generated merge / revert messages
+if [[ "$subject" =~ ^Merge\ (branch|pull\ request|remote-tracking\ branch|tag)\  ]] || [[ "$subject" =~ ^Revert\ \" ]]; then
+  exit 0
+fi
+
+# Conventional Commits: <type>[(<scope>)][!]: <description>
+pattern='^(feat|fix|docs|chore|refactor|test|ci|build|style|perf)(\([a-zA-Z0-9._/-]+\))?!?: .+$'
+
+if [[ ! "$subject" =~ $pattern ]]; then
+  cat >&2 <<EOF
+[commit-msg] ERROR: Commit message does not follow Conventional Commits.
+  Got: "$subject"
+
+  Expected format:
+    <type>[(<scope>)]: <description>
+
+  Allowed types:
+    feat | fix | docs | chore | refactor | test | ci | build | style | perf
+
+  Examples:
+    feat(core): initialize agent runtime
+    fix: handle empty configuration file
+    docs: add local git hooks setup guide
+    chore(ci): add repo guard workflow
+EOF
+  exit 1
+fi

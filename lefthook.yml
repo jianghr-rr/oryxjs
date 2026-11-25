@@ -1,0 +1,29 @@
+# Lefthook configuration (optional wrapper over .githooks/)
+# Install: brew install lefthook && lefthook install
+# Without lefthook, enable directly via: git config core.hooksPath .githooks
+
+pre-commit:
+  parallel: false
+  commands:
+    repo-guard:
+      run: .githooks/pre-commit
+
+    # -----------------------------------------------------------------------
+    # [RESERVED] Uncomment after project skeleton & package.json are ready:
+    # -----------------------------------------------------------------------
+    # format:
+    #   run: pnpm format:check
+    # lint:
+    #   run: pnpm lint
+    # typecheck:
+    #   run: pnpm typecheck
+
+commit-msg:
+  commands:
+    conventional-commits:
+      run: .githooks/commit-msg {1}
+
+pre-push:
+  commands:
+    block-direct-main-push:
+      run: .githooks/pre-push

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Escape hatch for the initial bootstrap push only:
+#   ALLOW_MAIN_PUSH=1 git push -u origin main
+if [[ "${ALLOW_MAIN_PUSH:-0}" == "1" ]]; then
+  echo "[pre-push] WARNING: ALLOW_MAIN_PUSH=1 is set; bypassing local main push guard." >&2
+  exit 0
+fi
+
+# Git passes "<local_ref> <local_sha> <remote_ref> <remote_sha>" lines on stdin
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/main" ]]; then
+    cat >&2 <<'EOF'
+[pre-push] ERROR: Direct push to 'main' is blocked by local repo policy.
+
+  Please use a topic branch and open a Pull Request to merge into 'main':
+    git checkout -b feat/<short-name>
+    git push -u origin HEAD
+
+  (Bootstrap only: if initializing an empty remote 'main' branch for the first time,
+   run: ALLOW_MAIN_PUSH=1 git push -u origin main)
+EOF
+    exit 1
+  fi
+done

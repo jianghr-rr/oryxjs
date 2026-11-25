@@ -1,0 +1,174 @@
+name: Repo Guard
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        # Note: For GitHub Organization repos, set GITLEAKS_LICENSE secret or switch to gitleaks CLI.
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  repo-hygiene-and-commit-lint:
+    name: Repo Hygiene & Commit Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check forbidden sensitive files
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r -d '' file; do
+            base="$(basename "$file")"
+            case "$base" in
+              .env.example|.env.sample|.env.template|*.env.example)
+                ;;
+              .env|.env.*|*.env|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|id_rsa|id_ed25519|id_ecdsa|id_dsa)
+                echo "::error file=${file}::Sensitive file must not be tracked in git."
+                failed=1
+                ;;
+            esac
+          done < <(git ls-files -z)
+          exit "$failed"
+
+      - name: Check merge conflict markers and large files (> 2MB)
+        run: |
+          set -euo pipefail
+          max_bytes=$((2 * 1024 * 1024))
+          failed=0
+          while IFS= read -r -d '' file; do
+            size="$(stat -c%s "$file")"
+            if [[ "$size" -gt "$max_bytes" ]]; then
+              echo "::error file=${file}::File exceeds 2MB limit (${size} bytes)."
+              failed=1
+            fi
+            if grep -InE '^(<<<<<<< |=======$|>>>>>>> )' "$file" >/dev/null 2>&1; then
+              echo "::error file=${file}::Merge conflict marker found."
+              failed=1
+            fi
+          done < <(git ls-files -z)
+          exit "$failed"
+
+      - name: Validate JSON and YAML syntax
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          try:
+              import yaml
+          except ImportError:
+              print("::error::PyYAML is not installed on runner.", file=sys.stderr)
+              sys.exit(1)
+
+          files = subprocess.check_output(["git", "ls-files", "-z"]).decode("utf-8").split("\0")
+          failed = False
+
+          for rel in files:
+              if not rel:
+                  continue
+              path = pathlib.Path(rel)
+              suffix = path.suffix.lower()
+              if suffix == ".json":
+                  try:
+                      with path.open("r", encoding="utf-8") as f:
+                          json.load(f)
+                  except Exception as exc:
+                      print(f"::error file={rel}::Invalid JSON syntax: {exc}", file=sys.stderr)
+                      failed = True
+              elif suffix in (".yml", ".yaml"):
+                  try:
+                      with path.open("r", encoding="utf-8") as f:
+                          list(yaml.safe_load_all(f))
+                  except Exception as exc:
+                      print(f"::error file={rel}::Invalid YAML syntax: {exc}", file=sys.stderr)
+                      failed = True
+
+          if failed:
+              sys.exit(1)
+          print("All tracked JSON and YAML files are valid.")
+          PY
+
+      - name: Lint commit messages (Conventional Commits)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          pattern='^(feat|fix|docs|chore|refactor|test|ci|build|style|perf)(\([a-zA-Z0-9._/-]+\))?!?: .+$'
+          failed=0
+
+          validate_subject() {
+            local label="$1"
+            local subject="$2"
+            if [[ "$subject" =~ ^Merge\ (branch|pull\ request|remote-tracking\ branch|tag)\  ]] || [[ "$subject" =~ ^Revert\ \" ]]; then
+              return 0
+            fi
+            if [[ ! "$subject" =~ $pattern ]]; then
+              echo "::error::${label} does not follow Conventional Commits: ${subject}"
+              failed=1
+            fi
+          }
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            validate_subject "PR title" "$PR_TITLE"
+            while IFS= read -r subject; do
+              [[ -n "$subject" ]] && validate_subject "PR commit" "$subject"
+            done < <(git log --format=%s "${PR_BASE_SHA}..${PR_HEAD_SHA}")
+          else
+            if [[ "$PUSH_BEFORE_SHA" =~ ^0+$ || -z "$PUSH_BEFORE_SHA" ]]; then
+              range="$PUSH_SHA"
+            else
+              range="${PUSH_BEFORE_SHA}..${PUSH_SHA}"
+            fi
+            while IFS= read -r subject; do
+              [[ -n "$subject" ]] && validate_subject "Commit" "$subject"
+            done < <(git log --format=%s "$range")
+          fi
+
+          exit "$failed"
+
+  # ---------------------------------------------------------------------------
+  # [RESERVED] Uncomment after project skeleton & package.json are initialized:
+  # ---------------------------------------------------------------------------
+  # verify-and-build:
+  #   name: Verify & Build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: pnpm/action-setup@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: pnpm
+  #     - run: pnpm install --frozen-lockfile
+  #     - run: pnpm verify
+  #     - run: pnpm build
