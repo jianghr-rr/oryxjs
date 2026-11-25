@@ -8,15 +8,9 @@ pre-commit:
     repo-guard:
       run: .githooks/pre-commit
 
-    # -----------------------------------------------------------------------
-    # [RESERVED] Uncomment after project skeleton & package.json are ready:
-    # -----------------------------------------------------------------------
-    # format:
-    #   run: pnpm format:check
-    # lint:
-    #   run: pnpm lint
-    # typecheck:
-    #   run: pnpm typecheck
+    biome:
+      glob: "*.{js,jsx,ts,tsx,mjs,cjs,json,css}"
+      run: pnpm exec biome check --no-errors-on-unmatched {staged_files}
 
 commit-msg:
   commands:
